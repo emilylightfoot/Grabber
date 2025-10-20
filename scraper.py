@@ -1,4 +1,4 @@
-import cloudscraper
+import requests
 import os
 import time
 import random
@@ -17,12 +17,11 @@ def download_pdf(url_template, year, num, folder):
     if os.path.exists(filepath):
         return True, False, "skipped"
     
-    scraper = cloudscraper.create_scraper()
-    head = scraper.head(url)
+    head = requests.head(url, timeout=10)
     if head.status_code != 200:
         return False, False, "missed"
     
-    response = scraper.get(url, stream=True)
+    response = requests.get(url, stream=True, timeout=30)
     if response.status_code == 200:
         try:
             with open(filepath, 'wb') as f:
@@ -76,7 +75,7 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
         if (i + 1) % 10 == 0 or i == total_combos - 1:
             success_rate = (new_downloaded / total_checked * 100) if total_checked > 0 else 0
             yield {
-                'progress': (i + 1) / total_combos * 100,
+                'progress': (i + 1) / total_combos,  # 0.0 to 1.0 for Streamlit
                 'checked': total_checked,
                 'new': new_downloaded,
                 'rate': f"{success_rate:.1f}%",
@@ -92,7 +91,7 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
     
     pbar.close()
     yield {
-        'progress': 100,
+        'progress': 1.0,  # 100% as 1.0
         'checked': total_checked,
         'new': new_downloaded,
         'rate': f"{new_downloaded / total_checked * 100:.1f}%" if total_checked > 0 else "0%",
@@ -105,8 +104,7 @@ def test_url(url_template, test_year, test_num):
     """Quick HEAD test for one combo"""
     try:
         url = url_template.format(year=test_year, num=test_num)
-        scraper = cloudscraper.create_scraper()
-        head = scraper.head(url)
+        head = requests.head(url, timeout=10)
         return head.status_code == 200, url
     except Exception as e:
         return False, f"Error: {e}"
