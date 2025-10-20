@@ -19,6 +19,7 @@ else:
     years = st.sidebar.multiselect("Years", options=list(range(1977, 2026)), default=[2025])  # Expanded range, default single
 
 start_num = st.sidebar.number_input("Start Num", min_value=1, value=1)  # Default to 1 for older years
+st.sidebar.info("💡 For recent years like 2025, try start_num=3000 to skip early misses.")  # NEW: Hint
 end_num = st.sidebar.number_input("End Num", min_value=1, value=9999)  # Wide default for full sweep
 download_folder = st.sidebar.text_input("Folder", value="./downloads")
 
@@ -26,7 +27,7 @@ download_folder = st.sidebar.text_input("Folder", value="./downloads")
 st.header("Quick Test")
 col1, col2 = st.columns(2)
 test_year = col1.number_input("Test Year", value=2025, min_value=1977, max_value=2025)
-test_num = col2.number_input("Test Num", value=3042)
+test_num = col2.number_input("Test Num", value=3121)  # CHANGED: To a known good one (from search)
 if st.button("Test URL"):
     exists, details = test_url(url_template, test_year, test_num)
     if exists:
