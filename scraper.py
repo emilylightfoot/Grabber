@@ -1,4 +1,4 @@
-import cloudscraper  # NEW: Replaces requests for anti-bot
+import requests
 import os
 import time
 import random
@@ -16,31 +16,47 @@ def download_pdf(url_template, year, num, folder):
     if os.path.exists(filepath):
         return True, False, "skipped"
     
-    # NEW: Use cloudscraper per request (fresh session avoids blocks)
-    scraper = cloudscraper.create_scraper()
+    # ENHANCED: Full browser headers to evade detection (no 403/404 blocks)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://dier.gov.mt/decrees/',  # Fake from decrees index to look legit
+        'Accept': 'application/pdf, text/html;q=0.9, */*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    }
+    
+    session = requests.Session()  # Reuse session for cookies if needed
+    session.headers.update(headers)
     
     try:
-        head = scraper.head(url, timeout=10)
-        if head.status_code != 200:
-            return False, False, f"missed (HEAD {head.status_code})"
-        
-        response = scraper.get(url, stream=True, timeout=30)
+        # SKIP HEAD: Go straight to GET (more reliable for this site)
+        response = session.get(url, stream=True, timeout=30)
         if response.status_code == 200:
-            try:
+            content_type = response.headers.get('content-type', '').lower()
+            if 'application/pdf' in content_type:
+                # PDF magic check for extra safety
+                first_bytes = b''.join(response.iter_content(chunk_size=100))[:4]
+                if first_bytes != b'%PDF':
+                    return False, False, f"not PDF (bytes: {first_bytes})"
+                
+                # Reset stream and download
+                response = session.get(url, stream=True, timeout=30)
                 with open(filepath, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
                 return True, True, "downloaded"
-            except OSError as e:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                return False, False, f"error: {e}"
+            else:
+                return False, False, f"wrong type: {content_type}"
         else:
             return False, False, f"failed: {response.status_code}"
-    except Exception as e:  # Broader catch for scraper errors
-        return False, False, f"connection error: {str(e)[:50]}..."
+    except requests.exceptions.RequestException as e:
+        return False, False, f"error: {str(e)[:50]}..."
+    finally:
+        session.close()
 
-def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max_consecutive_miss=1000):  # INCREASED default
+def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max_consecutive_miss=1000):
     site_folder = os.path.join(folder, site_alias)
     os.makedirs(site_folder, exist_ok=True)
     
@@ -54,15 +70,12 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
     all_combos = list(product(years, range(start_num, end_num + 1)))
     total_combos = len(all_combos)
     
-    # NEW: Log start
     logs.append(f"--- Scraping {site_alias} ({len(years)} years, {start_num}-{end_num}) ---")
     
-    for i, (year, num) in enumerate(all_combos):  # No tqdm; Streamlit handles progress
-        # Reset misses per year
+    for i, (year, num) in enumerate(all_combos):
         if prev_year != year:
             consecutive_miss = 0
             prev_year = year
-            year_folder = os.path.join(site_folder, str(year))
             logs.append(f"--- Starting year {year} ---")
         
         year_folder = os.path.join(site_folder, str(year))
@@ -82,13 +95,11 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
                 logs.append(f"Warning: {consecutive_miss} consecutive misses in {year} at {num}")
             if consecutive_miss >= max_consecutive_miss:
                 logs.append(f"Stopped year {year} after {consecutive_miss} misses at {num}")
-                # Continue to next year, but flag
         else:
             consecutive_miss = 0
         
-        time.sleep(random.uniform(0.5, 1.5))  # Polite delay
+        time.sleep(random.uniform(0.5, 1.5))
         
-        # Yield every 10 for UI
         if (i + 1) % 10 == 0 or i == total_combos - 1:
             success_rate = (new_downloaded / total_checked * 100) if total_checked > 0 else 0
             progress_val = (i + 1) / total_combos if total_combos > 0 else 1.0
@@ -98,10 +109,9 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
                 'new': new_downloaded,
                 'rate': f"{success_rate:.1f}%",
                 'log': log_entry,
-                'miss_streak': consecutive_miss  # NEW: For UI if wanted
+                'miss_streak': consecutive_miss
             }
     
-    # Save CSV
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     csv_path = os.path.join(site_folder, f"{site_alias}_logs_{timestamp}.csv")
     with open(csv_path, 'w', newline='') as f:
@@ -109,12 +119,7 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
         writer.writerow(['timestamp', 'year', 'num', 'status'])
         writer.writerows(csv_logs)
     
-    # NEW: Total count across years
-    total_pdfs = 0
-    for y in years:
-        y_folder = os.path.join(site_folder, str(y))
-        if os.path.exists(y_folder):
-            total_pdfs += len([f for f in os.listdir(y_folder) if f.endswith('.pdf')])
+    total_pdfs = sum(len([f for f in os.listdir(os.path.join(site_folder, str(y))) if f.endswith('.pdf')]) for y in years if os.path.exists(os.path.join(site_folder, str(y))))
     
     yield {
         'progress': 1.0,
@@ -123,21 +128,37 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
         'rate': f"{new_downloaded / total_checked * 100:.1f}%" if total_checked > 0 else "0%",
         'complete': True,
         'csv_path': csv_path,
-        'logs': logs[-100:],  # Last 100
-        'total_pdfs': total_pdfs  # NEW: Grand total
+        'logs': logs[-100:],
+        'total_pdfs': total_pdfs
     }
 
 def test_url(url_template, test_year, test_num):
-    """Quick test: Use full GET to bypass HEAD blocks"""
+    """Quick test: GET with PDF validation (no HEAD)"""
     try:
         url = url_template.format(year=test_year, num=test_num)
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url, stream=True, timeout=10)  # CHANGED: GET instead of HEAD
-        if response.status_code == 200 and 'application/pdf' in response.headers.get('content-type', ''):
-            # Quick peek: First 100 bytes should start with PDF magic '%PDF-'
-            first_bytes = b''.join(response.iter_content(chunk_size=100))[:4]
-            if first_bytes == b'%PDF':
-                return True, url
-        return False, f"Failed: Status {response.status_code}, Type: {response.headers.get('content-type', 'N/A')}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://dier.gov.mt/decrees/',
+            'Accept': 'application/pdf, text/html;q=0.9, */*;q=0.8'
+        }
+        session = requests.Session()
+        session.headers.update(headers)
+        response = session.get(url, stream=True, timeout=15)
+        if response.status_code == 200:
+            content_type = response.headers.get('content-type', '').lower()
+            if 'application/pdf' in content_type:
+                first_bytes = b''.join(response.iter_content(chunk_size=100))[:4]
+                if first_bytes == b'%PDF':
+                    return True, url
+                else:
+                    return False, f"Not PDF: First bytes {first_bytes}"
+            else:
+                # DEBUG: If HTML, peek for clues (e.g., 404/403 message)
+                error_hint = response.text[:200].strip() if 'text/html' in content_type else "Unknown"
+                return False, f"Wrong type: {content_type}. Hint: {error_hint}"
+        else:
+            return False, f"Status: {response.status_code}"
     except Exception as e:
         return False, f"Error: {e}"
+    finally:
+        session.close()
