@@ -74,8 +74,9 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
         # Yield progress every 10 for UI efficiency
         if (i + 1) % 10 == 0 or i == total_combos - 1:
             success_rate = (new_downloaded / total_checked * 100) if total_checked > 0 else 0
+            progress_val = min(1.0, max(0.0, (i + 1) / total_combos if total_combos > 0 else 1.0))
             yield {
-                'progress': (i + 1) / total_combos,  # 0.0 to 1.0 for Streamlit
+                'progress': progress_val,  # Clamped 0.0 to 1.0 for Streamlit
                 'checked': total_checked,
                 'new': new_downloaded,
                 'rate': f"{success_rate:.1f}%",
