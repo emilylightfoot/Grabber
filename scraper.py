@@ -128,11 +128,16 @@ def scrape_site(url_template, years, start_num, end_num, folder, site_alias, max
     }
 
 def test_url(url_template, test_year, test_num):
-    """Quick HEAD test"""
+    """Quick test: Use full GET to bypass HEAD blocks"""
     try:
         url = url_template.format(year=test_year, num=test_num)
         scraper = cloudscraper.create_scraper()
-        head = scraper.head(url, timeout=10)
-        return head.status_code == 200, url
+        response = scraper.get(url, stream=True, timeout=10)  # CHANGED: GET instead of HEAD
+        if response.status_code == 200 and 'application/pdf' in response.headers.get('content-type', ''):
+            # Quick peek: First 100 bytes should start with PDF magic '%PDF-'
+            first_bytes = b''.join(response.iter_content(chunk_size=100))[:4]
+            if first_bytes == b'%PDF':
+                return True, url
+        return False, f"Failed: Status {response.status_code}, Type: {response.headers.get('content-type', 'N/A')}"
     except Exception as e:
         return False, f"Error: {e}"
